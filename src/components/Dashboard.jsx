@@ -41,8 +41,20 @@ export default function Dashboard({ user }) {
 
   const loadRows = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("pharmacies").select("*").order("imported_at", { ascending: false });
-    setRows(data || []);
+    let all = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("pharmacies").select("*")
+        .order("imported_at", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error || !data || data.length === 0) break;
+      all = [...all, ...data];
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setRows(all);
     setLoading(false);
   }, []);
 
@@ -63,7 +75,13 @@ export default function Dashboard({ user }) {
           ville: r.ville, telephone: r.telephone,
           old_x: r.old_x, old_y: r.old_y, status: "pending",
         }));
-        const { error } = await supabase.from("pharmacies").upsert(toInsert, { onConflict: "code_firme", ignoreDuplicates: false });
+        const chunkSize = 500;
+			let error = null;
+			for (let i = 0; i < toInsert.length; i += chunkSize) {
+			  const chunk = toInsert.slice(i, i + chunkSize);
+			  const { error: err } = await supabase.from("pharmacies").upsert(chunk, { onConflict: "code_firme", ignoreDuplicates: false });
+			  if (err) { error = err; break; }
+			}
         if (error) { alert("Import error: " + error.message); return; }
         await loadRows();
         setSubTab("dashboard");
