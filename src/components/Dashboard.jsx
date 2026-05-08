@@ -117,7 +117,7 @@ export default function Dashboard({ user }) {
             status: autoStatus, score: best.score,
             new_x: best.candidate.lng, new_y: best.candidate.lat,
             gap_km: dist !== null ? parseFloat(dist.toFixed(3)) : null,
-            phone_diff: cp && rp && cp !== rp,
+            phone_diff: !!(cp && rp && cp !== rp),
             maps_phone: best.candidate.phone, maps_name: best.candidate.name,
             maps_address: best.candidate.address, validated_at: new Date().toISOString(), notes: null,
           };
