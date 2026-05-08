@@ -41,8 +41,21 @@ export default function Dashboard({ user }) {
 
   const loadRows = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("pharmacies").select("*").order("imported_at", { ascending: false });
-    setRows(data || []);
+    let all = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("pharmacies").select("*")
+        .order("imported_at", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error) { console.error("Load error:", error.message); break; }
+      if (!data || data.length === 0) break;
+      all = [...all, ...data];
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setRows(all);
     setLoading(false);
   }, []);
 

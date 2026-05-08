@@ -23,12 +23,21 @@ export default function ValidatedPage({ user }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("pharmacies")
-      .select("*")
-      .in("status", ["approved", "manual_validated"])
-      .order("validated_at", { ascending: false });
-    setRows(data || []);
+    let all = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("pharmacies").select("*")
+        .in("status", ["approved", "manual_validated"])
+        .order("validated_at", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error || !data || data.length === 0) break;
+      all = [...all, ...data];
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setRows(all);
     setLoading(false);
   }, []);
 

@@ -153,10 +153,20 @@ export default function ReviewPage({ user }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("pharmacies").select("*").eq("status", "review")
-      .order("imported_at", { ascending: true });
-    setRows(data || []);
+    let all = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("pharmacies").select("*").eq("status", "review")
+        .order("imported_at", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error || !data || data.length === 0) break;
+      all = [...all, ...data];
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setRows(all);
     setLoading(false);
   }, []);
 
