@@ -41,20 +41,8 @@ export default function Dashboard({ user }) {
 
   const loadRows = useCallback(async () => {
     setLoading(true);
-    let all = [];
-    let from = 0;
-    const pageSize = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from("pharmacies").select("*")
-        .order("imported_at", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (error || !data || data.length === 0) break;
-      all = [...all, ...data];
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    setRows(all);
+    const { data } = await supabase.from("pharmacies").select("*").order("imported_at", { ascending: false });
+    setRows(data || []);
     setLoading(false);
   }, []);
 
@@ -75,13 +63,7 @@ export default function Dashboard({ user }) {
           ville: r.ville, telephone: r.telephone,
           old_x: r.old_x, old_y: r.old_y, status: "pending",
         }));
-        const chunkSize = 500;
-			let error = null;
-			for (let i = 0; i < toInsert.length; i += chunkSize) {
-			  const chunk = toInsert.slice(i, i + chunkSize);
-			  const { error: err } = await supabase.from("pharmacies").upsert(chunk, { onConflict: "code_firme", ignoreDuplicates: false });
-			  if (err) { error = err; break; }
-			}
+        const { error } = await supabase.from("pharmacies").upsert(toInsert, { onConflict: "code_firme", ignoreDuplicates: false });
         if (error) { alert("Import error: " + error.message); return; }
         await loadRows();
         setSubTab("dashboard");
@@ -127,7 +109,12 @@ export default function Dashboard({ user }) {
             maps_address: best.candidate.address, validated_at: new Date().toISOString(), notes: null,
           };
         }
-        await supabase.from("pharmacies").update(update).eq("code_firme", row.code_firme);
+        const { error: dbErr } = await supabase.from("pharmacies").update(update).eq("code_firme", row.code_firme);
+        if (dbErr) {
+          console.error("DB save failed for", row.code_firme, dbErr.message);
+          await new Promise((r) => setTimeout(r, 800));
+          await supabase.from("pharmacies").update(update).eq("code_firme", row.code_firme);
+        }
         setRows((prev) => prev.map((r) => r.code_firme === row.code_firme ? { ...r, ...update } : r));
       } catch (err) {
         const update = { status:"error", score:0, notes: err.message };
@@ -135,7 +122,7 @@ export default function Dashboard({ user }) {
         setRows((prev) => prev.map((r) => r.code_firme === row.code_firme ? { ...r, ...update } : r));
       }
       setProgress(Math.round(((i+1)/toProcess.length)*100));
-      await new Promise((res) => setTimeout(res, 220));
+      await new Promise((res) => setTimeout(res, 350));
     }
     setRunning(false);
   }, [apiKey, rows]);
