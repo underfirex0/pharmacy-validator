@@ -75,7 +75,7 @@ export default function Dashboard({ user }) {
 
         const { error } = await supabase
           .from("pharmacies")
-          .upsert(toInsert, { onConflict: "code_firme,created_by", ignoreDuplicates: false });
+          .upsert(toInsert, { onConflict: "code_firme", ignoreDuplicates: false });
 
         if (error) { alert("Import error: " + error.message); return; }
         await loadRows();
