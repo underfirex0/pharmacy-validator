@@ -31,6 +31,7 @@ export default function Dashboard({ user }) {
   const [subTab, setSubTab]     = useState("dashboard");
   const [filter, setFilter]     = useState("all");
   const [search, setSearch]     = useState("");
+  const [selected, setSelected] = useState(new Set());
   const [apiKey, setApiKey]     = useState(() => localStorage.getItem("gplaceskey") || "");
   const [saveMsg, setSaveMsg]   = useState("");
   const fileRef  = useRef();
@@ -40,8 +41,8 @@ export default function Dashboard({ user }) {
 
   const loadRows = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from("pharmacies").select("*").order("imported_at", { ascending: false });
-    if (!error) setRows(data || []);
+    const { data } = await supabase.from("pharmacies").select("*").order("imported_at", { ascending: false });
+    setRows(data || []);
     setLoading(false);
   }, []);
 
@@ -74,6 +75,7 @@ export default function Dashboard({ user }) {
     tryRead("utf-8");
   };
 
+  // Auto-validate via API — only when user explicitly clicks the button
   const runValidation = useCallback(async (targetRows) => {
     if (!apiKey.trim()) { alert("Enter your Google Places API key in Settings."); return; }
     const toProcess = targetRows || rows.filter((r) => r.status === "pending" || r.status === "error");
@@ -81,7 +83,6 @@ export default function Dashboard({ user }) {
     setRunning(true); abortRef.current = false;
     const codes = new Set(toProcess.map((r) => r.code_firme));
     setRows((prev) => prev.map((r) => codes.has(r.code_firme) ? { ...r, status: "running" } : r));
-
     for (let i = 0; i < toProcess.length; i++) {
       if (abortRef.current) break;
       const row = toProcess[i];
@@ -95,10 +96,12 @@ export default function Dashboard({ user }) {
           const best = scored[0];
           const dist = (row.old_x && row.old_y && best.candidate.lat && best.candidate.lng)
             ? haversineKm(row.old_y, row.old_x, best.candidate.lat, best.candidate.lng) : null;
-          const status = decideStatus(best, row, dist);
+          // API result stays as "approved" or "review" — NOT auto-sent to validated page
+          // User must manually click Validate to move to validated page
+          const autoStatus = decideStatus(best, row, dist);
           const cp = normalizePhone(best.candidate.phone), rp = normalizePhone(row.telephone);
           update = {
-            status, score: best.score,
+            status: autoStatus, score: best.score,
             new_x: best.candidate.lng, new_y: best.candidate.lat,
             gap_km: dist !== null ? parseFloat(dist.toFixed(3)) : null,
             phone_diff: cp && rp && cp !== rp,
@@ -119,24 +122,34 @@ export default function Dashboard({ user }) {
     setRunning(false);
   }, [apiKey, rows]);
 
-  // Quick action buttons — validate or send to review
-  const quickAction = async (row, action) => {
-    const status = action === "validate" ? "approved" : "review";
-    await supabase.from("pharmacies").update({ status, validated_at: new Date().toISOString() }).eq("code_firme", row.code_firme);
-    setRows((prev) => prev.map((r) => r.code_firme === row.code_firme ? { ...r, status } : r));
-    if (action === "validate") navigate("/validated");
-    else navigate("/review");
+  // Single row manual action
+  const setRowStatus = async (code_firme, status) => {
+    await supabase.from("pharmacies").update({ status, validated_at: new Date().toISOString() }).eq("code_firme", code_firme);
+    setRows((prev) => prev.map((r) => r.code_firme === code_firme ? { ...r, status } : r));
+    setSelected((prev) => { const n = new Set(prev); n.delete(code_firme); return n; });
+  };
+
+  // Bulk actions on selected rows
+  const bulkAction = async (status) => {
+    if (!selected.size) return;
+    const codes = [...selected];
+    await supabase.from("pharmacies").update({ status, validated_at: new Date().toISOString() }).in("code_firme", codes);
+    setRows((prev) => prev.map((r) => selected.has(r.code_firme) ? { ...r, status } : r));
+    setSelected(new Set());
+    if (status === "approved" || status === "manual_validated") navigate("/validated");
+    else if (status === "review") navigate("/review");
   };
 
   const deleteRow = async (code_firme) => {
     await supabase.from("pharmacies").delete().eq("code_firme", code_firme);
     setRows((prev) => prev.filter((r) => r.code_firme !== code_firme));
+    setSelected((prev) => { const n = new Set(prev); n.delete(code_firme); return n; });
   };
 
   const clearAll = async () => {
     if (!window.confirm("Delete ALL pharmacies?")) return;
     await supabase.from("pharmacies").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    setRows([]);
+    setRows([]); setSelected(new Set());
   };
 
   const filteredRows = rows.filter((r) => {
@@ -145,6 +158,16 @@ export default function Dashboard({ user }) {
     const ms = !q || r.raison_sociale?.toLowerCase().includes(q) || r.code_firme?.toLowerCase().includes(q) || r.ville?.toLowerCase().includes(q);
     return mf && ms;
   });
+
+  // Select/deselect
+  const toggleOne = (code) => setSelected((prev) => { const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n; });
+  const toggleAll = () => {
+    const allCodes = filteredRows.map((r) => r.code_firme);
+    const allSelected = allCodes.every((c) => selected.has(c));
+    setSelected(allSelected ? new Set() : new Set(allCodes));
+  };
+  const allChecked = filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.code_firme));
+  const someChecked = filteredRows.some((r) => selected.has(r.code_firme));
 
   const stats = {
     total:    rows.length,
@@ -166,19 +189,16 @@ export default function Dashboard({ user }) {
       {/* Sub-tabs */}
       <div style={{ borderBottom:"1px solid #1e2236", padding:"0 28px", display:"flex", gap:4 }}>
         {["dashboard","import","settings"].map((t) => (
-          <button key={t} onClick={() => setSubTab(t)} style={{
-            background:"transparent", border:"none", borderBottom: subTab===t?"2px solid #60a5fa":"2px solid transparent",
-            color: subTab===t?"#60a5fa":"#4a5068", padding:"12px 16px", fontSize:12, cursor:"pointer", ...mono, textTransform:"capitalize",
-          }}>{t}</button>
+          <button key={t} onClick={() => setSubTab(t)} style={{ background:"transparent", border:"none", borderBottom: subTab===t?"2px solid #60a5fa":"2px solid transparent", color: subTab===t?"#60a5fa":"#4a5068", padding:"12px 16px", fontSize:12, cursor:"pointer", ...mono, textTransform:"capitalize" }}>{t}</button>
         ))}
       </div>
 
       <div style={{ padding:"24px 28px" }}>
-
         {subTab === "dashboard" && (<>
+
           {/* Stats */}
           <div style={{ display:"flex", gap:10, marginBottom:20, flexWrap:"wrap" }}>
-            {[["Total",stats.total,"#8890a8","all"],["Approved",stats.approved,"#22c55e","approved"],["Review",stats.review,"#fbbf24","review"],["Not found",stats.notfound,"#f87171","notfound"],["Pending",stats.pending,"#818cf8","pending"],["Error",stats.error,"#f87171","error"]].map(([label,val,color,f]) => (
+            {[["Total",stats.total,"#8890a8","all"],["Validated",stats.approved,"#22c55e","approved"],["Review",stats.review,"#fbbf24","review"],["Not found",stats.notfound,"#f87171","notfound"],["Pending",stats.pending,"#818cf8","pending"],["Error",stats.error,"#f87171","error"]].map(([label,val,color,f]) => (
               <div key={label} style={{ ...card, minWidth:90, cursor:"pointer", outline: filter===f?"1px solid #2a4a8e":"none" }} onClick={() => setFilter(f)}>
                 <div style={{ fontSize:10, color:"#3a4060", ...mono, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>{label}</div>
                 <div style={{ fontSize:22, fontWeight:600, color }}>{val}</div>
@@ -186,7 +206,7 @@ export default function Dashboard({ user }) {
             ))}
             {running && (
               <div style={{ ...card, minWidth:160 }}>
-                <div style={{ fontSize:10, color:"#3a4060", ...mono, marginBottom:6 }}>PROGRESS</div>
+                <div style={{ fontSize:10, color:"#3a4060", ...mono, marginBottom:6 }}>API PROGRESS</div>
                 <div style={{ background:"#1e2236", borderRadius:4, height:5 }}>
                   <div style={{ background:"#3a7ad4", borderRadius:4, height:5, width:`${progress}%`, transition:"width 0.3s" }}/>
                 </div>
@@ -198,9 +218,20 @@ export default function Dashboard({ user }) {
           {/* Toolbar */}
           <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
             <button onClick={() => runValidation()} disabled={running} style={{ background: running?"#0a1020":"linear-gradient(135deg,#1a3a6e,#0f2a55)", border:`1px solid ${running?"#1e2236":"#2a5a9e"}`, color: running?"#3a5070":"#90c0f0", padding:"8px 18px", borderRadius:7, fontSize:12, cursor: running?"not-allowed":"pointer", ...mono }}>
-              {running ? `Running… ${progress}%` : `▶ Auto-validate pending (${stats.pending})`}
+              {running ? `API running… ${progress}%` : `⚙ Auto-validate via API (${stats.pending} pending)`}
             </button>
             {running && <button onClick={() => { abortRef.current=true; setRunning(false); }} style={{ background:"#1a0f0f", border:"1px solid #4a1010", color:"#f87171", padding:"8px 14px", borderRadius:7, fontSize:12, cursor:"pointer", ...mono }}>■ Stop</button>}
+
+            {/* Bulk actions — shown when rows are selected */}
+            {selected.size > 0 && (
+              <div style={{ display:"flex", gap:6, alignItems:"center", background:"#0c0f1c", border:"1px solid #2a4a8e", borderRadius:8, padding:"6px 14px" }}>
+                <span style={{ fontSize:12, color:"#60a5fa", ...mono, marginRight:6 }}>{selected.size} selected</span>
+                <button onClick={() => bulkAction("approved")} style={{ background:"#0a1f0a", border:"1px solid #1a4a1a", color:"#4ade80", padding:"5px 12px", borderRadius:6, fontSize:11, cursor:"pointer", ...mono }}>✓ Bulk validate</button>
+                <button onClick={() => bulkAction("review")}   style={{ background:"#1f1a00", border:"1px solid #4a3a00", color:"#fbbf24", padding:"5px 12px", borderRadius:6, fontSize:11, cursor:"pointer", ...mono }}>⚠ Bulk to review</button>
+                <button onClick={() => setSelected(new Set())} style={{ background:"transparent", border:"1px solid #2a3050", color:"#4a5068", padding:"5px 10px", borderRadius:6, fontSize:11, cursor:"pointer", ...mono }}>✕ Clear</button>
+              </div>
+            )}
+
             <button onClick={clearAll} style={{ background:"#1a0808", border:"1px solid #3a1010", color:"#f87171", padding:"8px 14px", borderRadius:7, fontSize:12, cursor:"pointer", ...mono, marginLeft:"auto" }}>🗑 Clear all</button>
           </div>
 
@@ -209,8 +240,10 @@ export default function Dashboard({ user }) {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, code, ville…"
               style={{ background:"#0c0f1c", border:"1px solid #1e2236", borderRadius:7, color:"#c8ccd8", padding:"7px 12px", fontSize:12, ...mono, width:240, outline:"none" }}/>
             <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
-              {["all","approved","review","notfound","pending","error"].map((f) => (
-                <button key={f} onClick={() => setFilter(f)} style={{ ...btn(filter===f), padding:"5px 11px", fontSize:11, textTransform:"capitalize" }}>{f}</button>
+              {["all","approved","manual_validated","review","notfound","pending","error"].map((f) => (
+                <button key={f} onClick={() => setFilter(f)} style={{ ...btn(filter===f), padding:"5px 11px", fontSize:11, textTransform:"capitalize" }}>
+                  {f === "manual_validated" ? "manual" : f}
+                </button>
               ))}
             </div>
             <span style={{ fontSize:11, color:"#3a4060", ...mono }}>{filteredRows.length} rows</span>
@@ -224,6 +257,10 @@ export default function Dashboard({ user }) {
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead>
                   <tr style={{ background:"#0c0f1c" }}>
+                    <th style={{ padding:"9px 10px", borderBottom:"1px solid #1e2236", width:36 }}>
+                      <input type="checkbox" checked={allChecked} ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
+                        onChange={toggleAll} style={{ cursor:"pointer", accentColor:"#60a5fa" }}/>
+                    </th>
                     {["Code","Name","Ville","Old X/Y","New X/Y","Gap","Tel CSV","Maps Phone","Status","Score","Actions"].map((h,i) => (
                       <th key={i} style={{ padding:"9px 10px", textAlign:"left", color:"#2a3060", ...mono, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", fontWeight:500, whiteSpace:"nowrap", borderBottom:"1px solid #1e2236" }}>{h}</th>
                     ))}
@@ -231,7 +268,10 @@ export default function Dashboard({ user }) {
                 </thead>
                 <tbody>
                   {filteredRows.map((row, i) => (
-                    <tr key={row.code_firme} style={{ borderBottom:"1px solid #0d1020", background: i%2===0?"#09090f":"transparent" }}>
+                    <tr key={row.code_firme} style={{ borderBottom:"1px solid #0d1020", background: selected.has(row.code_firme)?"#0c1428": i%2===0?"#09090f":"transparent" }}>
+                      <td style={{ padding:"8px 10px" }}>
+                        <input type="checkbox" checked={selected.has(row.code_firme)} onChange={() => toggleOne(row.code_firme)} style={{ cursor:"pointer", accentColor:"#60a5fa" }}/>
+                      </td>
                       <td style={{ padding:"8px 10px", color:"#4a6090", ...mono, whiteSpace:"nowrap", fontSize:11 }}>{row.code_firme}</td>
                       <td style={{ padding:"8px 10px", color:"#b0b8d0", maxWidth:180 }}>
                         <div style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.raison_sociale}</div>
@@ -255,28 +295,16 @@ export default function Dashboard({ user }) {
                       <td style={{ padding:"8px 10px", ...mono, fontSize:12 }}>
                         {row.score != null ? <span style={{ color: row.score>=80?"#4ade80":row.score>=50?"#fbbf24":"#f87171" }}>{row.score}</span> : "—"}
                       </td>
-                      <td style={{ padding:"8px 10px", whiteSpace:"nowrap" }}>
-                        {/* Validate button */}
-                        <button onClick={() => quickAction(row, "validate")} title="Mark as Validated"
-                          style={{ background:"#0a1f0a", border:"1px solid #1a4a1a", color:"#4ade80", padding:"4px 10px", borderRadius:5, fontSize:11, cursor:"pointer", ...mono, whiteSpace:"nowrap" }}>
-                          ✓ Validate
-                        </button>
-                        {/* Review button */}
-                        <button onClick={() => quickAction(row, "review")} title="Send to Review"
-                          style={{ background:"#1f1a00", border:"1px solid #4a3a00", color:"#fbbf24", padding:"4px 10px", borderRadius:5, fontSize:11, cursor:"pointer", ...mono, marginLeft:4, whiteSpace:"nowrap" }}>
-                          ⚠ Review
-                        </button>
-                        {/* Re-run */}
-                        <button onClick={() => runValidation([row])} disabled={running} title="Re-run API"
-                          style={{ background:"transparent", border:"1px solid #2a3050", color:"#4a6090", padding:"4px 8px", borderRadius:5, fontSize:11, cursor:"pointer", ...mono, marginLeft:4 }}>↻</button>
-                        {/* Delete */}
-                        <button onClick={() => deleteRow(row.code_firme)} title="Delete"
-                          style={{ background:"transparent", border:"1px solid #3a1010", color:"#f87171", padding:"4px 8px", borderRadius:5, fontSize:11, cursor:"pointer", ...mono, marginLeft:4 }}>✕</button>
+                      <td style={{ padding:"8px 6px", whiteSpace:"nowrap" }}>
+                        <button onClick={() => { setRowStatus(row.code_firme, "approved"); navigate("/validated"); }} style={{ background:"#0a1f0a", border:"1px solid #1a4a1a", color:"#4ade80", padding:"4px 9px", borderRadius:5, fontSize:10, cursor:"pointer", ...mono }}>✓ Validate</button>
+                        <button onClick={() => { setRowStatus(row.code_firme, "review"); navigate("/review"); }} style={{ background:"#1f1a00", border:"1px solid #4a3a00", color:"#fbbf24", padding:"4px 9px", borderRadius:5, fontSize:10, cursor:"pointer", ...mono, marginLeft:4 }}>⚠ Review</button>
+                        <button onClick={() => runValidation([row])} disabled={running} style={{ background:"transparent", border:"1px solid #2a3050", color:"#4a6090", padding:"4px 7px", borderRadius:5, fontSize:10, cursor:"pointer", ...mono, marginLeft:4 }}>↻</button>
+                        <button onClick={() => deleteRow(row.code_firme)} style={{ background:"transparent", border:"1px solid #3a1010", color:"#f87171", padding:"4px 7px", borderRadius:5, fontSize:10, cursor:"pointer", ...mono, marginLeft:4 }}>✕</button>
                       </td>
                     </tr>
                   ))}
                   {filteredRows.length === 0 && (
-                    <tr><td colSpan={11} style={{ padding:40, textAlign:"center", color:"#2a3050", fontSize:12 }}>
+                    <tr><td colSpan={12} style={{ padding:40, textAlign:"center", color:"#2a3050", fontSize:12 }}>
                       {rows.length === 0 ? "No pharmacies yet — go to Import tab" : "No rows match this filter"}
                     </td></tr>
                   )}
