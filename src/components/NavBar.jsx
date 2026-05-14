@@ -39,8 +39,9 @@ export default function NavBar({ user, counts = {} }) {
       </div>
       <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
         {navBtn("Dashboard", "/")}
-        {navBtn("✓ Validated", "/validated", T.greenText)}
-        {navBtn("⚠ To Review", "/review", T.yellowText)}
+        {navBtn("✓ Validé", "/validated", T.greenText)}
+        {navBtn("⚠ À Revoir", "/review", T.yellowText)}
+        {navBtn("✗ Pas validé", "/rejected", T.redText)}
         <button onClick={() => supabase.auth.signOut()} style={{
           background: T.redBg, border: `1px solid ${T.redBorder}`, color: T.redText,
           padding: "7px 14px", borderRadius: 8, fontSize: 13, cursor: "pointer", fontWeight: 500,
