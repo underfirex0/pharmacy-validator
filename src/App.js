@@ -5,6 +5,7 @@ import AuthPage from "./components/AuthPage";
 import Dashboard from "./components/Dashboard";
 import ValidatedPage from "./components/ValidatedPage";
 import ReviewPage from "./components/ReviewPage";
+import RejectedPage from "./components/RejectedPage";
 
 function ProtectedRoute({ session, children }) {
   if (!session) return <Navigate to="/login" replace />;
@@ -24,19 +25,22 @@ export default function App() {
   }, []);
 
   if (loading) return (
-    <div style={{ background:"#0a0c14", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", color:"#3a4060", fontFamily:"'IBM Plex Mono',monospace", fontSize:13 }}>
-      Loading…
+    <div style={{ background: "#f4f6f9", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontFamily: "'IBM Plex Sans',sans-serif", fontSize: 14 }}>
+      Chargement…
     </div>
   );
+
+  const P = ({ children }) => <ProtectedRoute session={session}>{children}</ProtectedRoute>;
 
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={session ? <Navigate to="/" replace /> : <AuthPage />} />
-        <Route path="/" element={<ProtectedRoute session={session}><Dashboard user={session?.user} /></ProtectedRoute>} />
-        <Route path="/validated" element={<ProtectedRoute session={session}><ValidatedPage user={session?.user} /></ProtectedRoute>} />
-        <Route path="/review" element={<ProtectedRoute session={session}><ReviewPage user={session?.user} /></ProtectedRoute>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/login"    element={session ? <Navigate to="/" replace /> : <AuthPage />} />
+        <Route path="/"         element={<P><Dashboard   user={session?.user} /></P>} />
+        <Route path="/validated"element={<P><ValidatedPage user={session?.user} /></P>} />
+        <Route path="/review"   element={<P><ReviewPage  user={session?.user} /></P>} />
+        <Route path="/rejected" element={<P><RejectedPage user={session?.user} /></P>} />
+        <Route path="*"         element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
