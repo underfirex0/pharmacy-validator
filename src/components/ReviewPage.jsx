@@ -14,7 +14,7 @@ function EditCell({ value, onChange, placeholder = "", width = 120 }) {
   );
 }
 
-function ReviewRow({ row, onSave, onValidate, onSendBack, index }) {
+function ReviewRow({ row, onSave, onValidate, onSendBack, onReject, index }) {
   const [form, setForm]         = useState({ raison_sociale:row.raison_sociale||"", telephone:row.telephone||"", ville:row.ville||"", new_x:row.new_x!=null?String(row.new_x):(row.old_x!=null?String(row.old_x):""), new_y:row.new_y!=null?String(row.new_y):(row.old_y!=null?String(row.old_y):""), call_notes:row.call_notes||"" });
   const [saving, setSaving]     = useState(false);
   const [saved, setSaved]       = useState(false);
@@ -57,7 +57,10 @@ function ReviewRow({ row, onSave, onValidate, onSendBack, index }) {
           {saving?"…":saved?"✓":"💾"}
         </button>
         <button onClick={handleValidate} disabled={saving} style={{ background:T.greenBg, border:`1px solid ${T.greenBorder}`, color:T.greenText, padding:"5px 12px", borderRadius:6, fontSize:11, cursor:"pointer", fontWeight:700, marginRight:4 }}>
-          ✓ Validate
+          ✓ Validé
+        </button>
+        <button onClick={() => onReject(row.code_firme)} style={{ background:T.redBg, border:`1px solid ${T.redBorder}`, color:T.redText, padding:"5px 10px", borderRadius:6, fontSize:11, cursor:"pointer", fontWeight:700, marginRight:4 }}>
+          ✗ Pas validé
         </button>
         <button onClick={() => onSendBack(row.code_firme)} style={{ background:T.yellowBg, border:`1px solid ${T.yellowBorder}`, color:T.yellowText, padding:"5px 9px", borderRadius:6, fontSize:11, cursor:"pointer" }}>↩</button>
       </td>
@@ -88,7 +91,7 @@ export default function ReviewPage({ user }) {
     setLoading(true);
     let all = [], from = 0;
     while (true) {
-      const { data, error } = await supabase.from("pharmacies").select("*").eq("status","review").order("imported_at",{ ascending:true }).range(from, from+999);
+      const { data, error } = await supabase.from("pharmacies").select("*").in("status",["review","notfound"]).order("imported_at",{ ascending:true }).range(from, from+999);
       if (error || !data || data.length === 0) break;
       all = [...all, ...data];
       if (data.length < 1000) break;
@@ -115,6 +118,12 @@ export default function ReviewPage({ user }) {
   const handleSendBack = async (code_firme) => {
     await supabase.from("pharmacies").update({ status:"pending" }).eq("code_firme", code_firme);
     setRows((prev) => prev.filter((r) => r.code_firme !== code_firme));
+  };
+
+  const handleReject = async (code_firme) => {
+    await supabase.from("pharmacies").update({ status:"rejected", validated_at:new Date().toISOString() }).eq("code_firme", code_firme);
+    setRows((prev) => prev.filter((r) => r.code_firme !== code_firme));
+    setSelected((prev) => { const n = new Set(prev); n.delete(code_firme); return n; });
   };
 
   const bulkValidate = async () => {
@@ -195,7 +204,7 @@ export default function ReviewPage({ user }) {
               </thead>
               <tbody>
                 {displayRows.map((row,i) => (
-                  <ReviewRow key={row.code_firme} row={row} index={i} onSave={handleSave} onValidate={handleValidate} onSendBack={handleSendBack}/>
+                  <ReviewRow key={row.code_firme} row={row} index={i} onSave={handleSave} onValidate={handleValidate} onSendBack={handleSendBack} onReject={handleReject}/>
                 ))}
               </tbody>
             </table>
